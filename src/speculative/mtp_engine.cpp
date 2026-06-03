@@ -412,6 +412,8 @@ SpeculativeEngine::VerifyOutput SpeculativeEngine::sample_and_accept(
     for (int i = 0; i < n_draft; ++i) {
         int32_t sampled = 0;
         float lp = 0.0f;
+        // logits row i = predict(batch[i]) = 用于验证 draft_tokens[i]
+        // row 0 = predict(id_last) → draft[0], row 1 = predict(draft[0]) → draft[1], 以此类推
         sample_one_row(i, sampled, lp);
 
         result.accepted_tokens.push_back(sampled);
@@ -426,7 +428,7 @@ SpeculativeEngine::VerifyOutput SpeculativeEngine::sample_and_accept(
         ++n_draft_accepted;
     }
 
-    // bonus token
+    // bonus token: logits row n_draft = predict(draft[n_draft-1])
     int32_t bonus = 0;
     float bonus_lp = 0.0f;
     sample_one_row(n_draft, bonus, bonus_lp);
