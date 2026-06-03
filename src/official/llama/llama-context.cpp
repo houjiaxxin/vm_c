@@ -282,7 +282,6 @@ llama_context::llama_context(
                     ggml_backend_buffer_name    (buf_output.get()),
                     ggml_backend_buffer_get_size(buf_output.get()) / 1024.0 / 1024.0);
         }
-    }
 
     // init the memory module
     if (!hparams.vocab_only) {
