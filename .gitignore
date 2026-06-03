@@ -1,0 +1,38 @@
+# Build
+build/
+build_*/
+cmake-build-*/
+
+# IDE
+.vs/
+.idea/
+*.swp
+*.swo
+*~
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Compiled
+*.o
+*.obj
+*.exe
+*.out
+*.app
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Environment
+.env
+.envrc
+
+# OS
+.DS_Store
+Thumbs.db
