@@ -1038,32 +1038,6 @@ extern "C" {
     LLAMA_API float * llama_get_embeddings_seq(struct llama_context * ctx, llama_seq_id seq_id);
 
     //
-    // backend sampling API [EXPERIMENTAL]
-    // note: use only if the llama_context was created with at least one llama_sampler_seq_config
-    //
-
-    // Get the backend sampled token for the ith token.
-    // Returns LLAMA_TOKEN_NULL if no token was sampled.
-    LLAMA_API llama_token llama_get_sampled_token_ith(struct llama_context * ctx, int32_t i);
-
-    // Get the backend sampled probabilities for the ith token
-    // The index matches llama_get_sampled_token_ith().
-    // Returns NULL if no probabilities were generated.
-    LLAMA_API float *  llama_get_sampled_probs_ith      (struct llama_context * ctx, int32_t i);
-    LLAMA_API uint32_t llama_get_sampled_probs_count_ith(struct llama_context * ctx, int32_t i);
-
-    // Get the backend sampled logits for the ith token
-    // Returns NULL if no logits were sampled.
-    LLAMA_API float *  llama_get_sampled_logits_ith      (struct llama_context * ctx, int32_t i);
-    LLAMA_API uint32_t llama_get_sampled_logits_count_ith(struct llama_context * ctx, int32_t i);
-
-    // Get the backend sampled candidates (token ids) for the ith token
-    // These are needed to map probability/logit indices to vocab token ids.
-    // Returns NULL if no candidates were sampled.
-    LLAMA_API llama_token * llama_get_sampled_candidates_ith      (struct llama_context * ctx, int32_t i);
-    LLAMA_API uint32_t      llama_get_sampled_candidates_count_ith(struct llama_context * ctx, int32_t i);
-
-    //
     // Vocab
     //
 
@@ -1283,11 +1257,6 @@ extern "C" {
 
         llama_sampler_context_t ctx;
     };
-
-    // [EXPERIMENTAL]
-    // attach a sampler to the context
-    // note: prefer initializing the context with llama_context_params.samplers when possible
-    LLAMA_API bool llama_set_sampler(struct llama_context * ctx, llama_seq_id seq_id, struct llama_sampler * smpl);
 
     // mirror of llama_sampler_i:
     LLAMA_API struct llama_sampler * llama_sampler_init  (      struct llama_sampler_i * iface, llama_sampler_context_t ctx);

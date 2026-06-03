@@ -518,18 +518,6 @@ public:
     const llama_memory_hybrid_iswa_context * mctx;
 };
 
-class llm_graph_input_sampling : public llm_graph_input_i {
-public:
-    llm_graph_input_sampling(std::map<llama_seq_id, llama_sampler *> samplers) :
-        samplers(std::move(samplers)) { }
-    virtual ~llm_graph_input_sampling() = default;
-
-    void set_input(const llama_ubatch * ubatch) override;
-    bool can_reuse(const llm_graph_params & params) override;
-
-    std::map<llama_seq_id, llama_sampler *> samplers;
-};
-
 //
 // llm_graph_result
 //
@@ -697,11 +685,6 @@ public:
     ggml_tensor * t_embd        = nullptr;
     ggml_tensor * t_embd_pooled = nullptr;
     ggml_tensor * t_h_pre_norm  = nullptr; // [n_embd, n_outputs] hidden state before final output norm
-
-    std::map<llama_seq_id, ggml_tensor*> t_sampled_logits;
-    std::map<llama_seq_id, ggml_tensor*> t_candidates;
-    std::map<llama_seq_id, ggml_tensor*> t_sampled;
-    std::map<llama_seq_id, ggml_tensor*> t_sampled_probs;
 
     std::vector<llm_graph_input_ptr> inputs;
 

@@ -857,43 +857,6 @@ bool llm_graph_input_mem_hybrid_iswa::can_reuse(const llm_graph_params & params)
     return res;
 }
 
-void llm_graph_input_sampling::set_input(const llama_ubatch * ubatch) {
-    // set the inputs only for the active samplers in the current ubatch
-    std::unordered_set<llama_seq_id> active_samplers;
-    for (uint32_t i = 0; i < ubatch->n_tokens; i++) {
-        if (ubatch->output[i]) {
-            llama_seq_id seq_id = ubatch->seq_id[i][0];
-            active_samplers.insert(seq_id);
-        }
-    }
-
-    for (auto seq_id : active_samplers) {
-        if (samplers.find(seq_id) == samplers.end()) {
-            continue;
-        }
-
-        auto & sampler = samplers[seq_id];
-
-        if (sampler->iface->backend_set_input) {
-            sampler->iface->backend_set_input(sampler);
-        }
-    }
-}
-
-bool llm_graph_input_sampling::can_reuse(const llm_graph_params & params) {
-    if (samplers.size() != params.samplers.size()) {
-        return false;
-    }
-
-    for (const auto & [seq_id, sampler] : params.samplers) {
-        if (samplers[seq_id] != sampler) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 //
 // llm_graph_result
 //
@@ -915,10 +878,6 @@ void llm_graph_result::reset() {
     t_logits      = nullptr;
     t_embd        = nullptr;
     t_embd_pooled = nullptr;
-    t_sampled.clear();
-    t_sampled_probs.clear();
-    t_sampled_logits.clear();
-    t_candidates.clear();
 
     params = {};
 
@@ -955,26 +914,6 @@ void llm_graph_result::set_outputs() {
     }
     if (t_h_pre_norm != nullptr) {
         ggml_set_output(t_h_pre_norm);
-    }
-    for (auto & [seq_id, t] : t_sampled) {
-        if (t != nullptr) {
-            ggml_set_output(t);
-        }
-    }
-    for (auto & [seq_id, t] : t_sampled_probs) {
-        if (t != nullptr) {
-            ggml_set_output(t);
-        }
-    }
-    for (auto & [seq_id, t] : t_sampled_logits) {
-        if (t != nullptr) {
-            ggml_set_output(t);
-        }
-    }
-    for (auto & [seq_id, t] : t_candidates) {
-        if (t != nullptr) {
-            ggml_set_output(t);
-        }
     }
 }
 
@@ -2990,91 +2929,7 @@ void llm_graph_context::build_pooling(
 }
 
 void llm_graph_context::build_sampling() const {
-    if (samplers.empty() || !res->t_logits) {
-        return;
-    }
-
-    std::array<ggml_tensor *, 2> outs;
-    outs[0] = res->t_logits;
-
-    auto inp_sampling = std::make_unique<llm_graph_input_sampling>(samplers);
-    res->add_input(std::move(inp_sampling));
-
-    std::map<llama_seq_id, int32_t> seq_to_logit_row;
-    int32_t logit_row_idx = 0;
-
-    for (uint32_t i = 0; i < ubatch.n_tokens; i++) {
-        if (ubatch.output[i]) {
-            llama_seq_id seq_id = ubatch.seq_id[i][0];
-            seq_to_logit_row[seq_id] = logit_row_idx;
-            logit_row_idx++;
-        }
-    }
-
-    // res->t_logits will contain logits for all tokens that want the logits calculated (logits=1 or output=1)
-    GGML_ASSERT(res->t_logits != nullptr && "missing t_logits tensor");
-
-    // add a dummy row of logits
-    // this trick makes the graph static, regardless of which samplers are activated
-    // this is important in order to minimize graph reallocations
-    ggml_tensor * logits_t = ggml_pad(ctx0, res->t_logits, 0, 1, 0, 0);
-
-    for (const auto & [seq_id, sampler] : samplers) {
-        const auto it = seq_to_logit_row.find(seq_id);
-
-        // inactive samplers always work on the first row
-        const auto row_idx = it != seq_to_logit_row.end() ? it->second : 0;
-        const int i_out    = it != seq_to_logit_row.end() ? 1          : 0;
-
-        ggml_tensor * logits_seq = ggml_view_1d(ctx0, logits_t, logits_t->ne[0], row_idx * logits_t->nb[1]);
-        ggml_format_name(logits_seq, "logits_seq_%d", seq_id);
-
-        struct llama_sampler_data data = {
-            /*.logits      =*/ logits_seq,
-            /*.probs       =*/ nullptr,
-            /*.sampled     =*/ nullptr,
-            /*.candidates  =*/ nullptr,
-        };
-
-        assert(sampler->iface->backend_apply);
-        sampler->iface->backend_apply(sampler, ctx0, gf, &data);
-
-        if (data.sampled != nullptr) {
-            res->t_sampled[seq_id] = data.sampled;
-            outs[1] = data.sampled;
-            ggml_build_forward_select(gf, outs.data(), outs.size(), i_out);
-        }
-
-        if (data.probs != nullptr) {
-            res->t_sampled_probs[seq_id] = data.probs;
-            outs[1] = data.probs;
-            ggml_build_forward_select(gf, outs.data(), outs.size(), i_out);
-        }
-
-        if (data.logits != nullptr) {
-            res->t_sampled_logits[seq_id] = data.logits;
-            outs[1] = data.logits;
-            ggml_build_forward_select(gf, outs.data(), outs.size(), i_out);
-        }
-
-        if (data.candidates != nullptr) {
-            res->t_candidates[seq_id] = data.candidates;
-            outs[1] = data.candidates;
-            ggml_build_forward_select(gf, outs.data(), outs.size(), i_out);
-        }
-    }
-
-    // TODO: Call llama_sampler_accept_ggml after all samplers have been applied.
-    /*
-    for (const auto & [seq_id, sampler] : samplers) {
-        if (auto it = res->t_sampled.find(seq_id); it != res->t_sampled.end()) {
-            ggml_tensor * selected_token = it->second;
-            if (selected_token != nullptr) {
-                llama_sampler_accept_ggml(sampler, ctx0, gf, selected_token);
-            }
-        }
-    }
-    */
+    // no backend samplers configured
 }
 
 int32_t llama_relative_position_bucket(llama_pos x, llama_pos y, uint64_t n_buckets, bool bidirectional) {

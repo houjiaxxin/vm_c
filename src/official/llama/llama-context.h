@@ -87,18 +87,6 @@ struct llama_context {
     float * get_embeddings_pre_norm();
     float * get_embeddings_pre_norm_ith(int32_t i);
 
-    llama_token * get_sampled_tokens() const;
-    llama_token   get_sampled_token_ith(int32_t idx);
-
-    float * get_sampled_logits_ith(int32_t idx);
-    size_t  get_sampled_logits_count(int32_t idx);
-
-    float * get_sampled_probs_ith(int32_t idx);
-    size_t  get_sampled_probs_count(int32_t idx);
-
-    const llama_token * get_sampled_candidates_ith(int32_t idx);
-    size_t get_sampled_candidates_count(int32_t idx);
-
     void attach_threadpool(
             ggml_threadpool_t threadpool,
             ggml_threadpool_t threadpool_batch);
@@ -241,8 +229,6 @@ public:
     // reserve a graph with a dummy ubatch of the specified size
     ggml_cgraph * graph_reserve(
         uint32_t n_tokens, uint32_t n_seqs, uint32_t n_outputs, const llama_memory_context_i * mctx, bool split_only = false, size_t * sizes = nullptr);
-
-    bool set_sampler(llama_seq_id seq_id, llama_sampler * sampler);
 
 private:
     llm_graph_params graph_params(
