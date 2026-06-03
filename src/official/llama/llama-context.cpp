@@ -366,6 +366,7 @@ llama_context::llama_context(
             }
         }
     }
+}
 
 llama_context::~llama_context() {
     if (!model.hparams.no_alloc) {
