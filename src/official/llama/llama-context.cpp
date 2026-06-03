@@ -3671,15 +3671,9 @@ float * llama_get_logits(llama_context * ctx) {
 float * llama_get_logits_ith(llama_context * ctx, int32_t i) {
     ctx->synchronize();
 
-    float * res = nullptr;
-
-    res = ctx->get_sampled_logits_ith(i);
-
-    if (!res) {
-        res = ctx->get_logits_ith(i);
-    }
-
-    return res;
+    // 简化：始终返回原始 logits 行，不尝试 sampled logits 路径
+    // (sampled logits 可能被后台采样器修改过，不适用于显式校验/采样)
+    return ctx->get_logits_ith(i);
 }
 
 float * llama_get_embeddings(llama_context * ctx) {
