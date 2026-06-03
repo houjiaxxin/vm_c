@@ -726,14 +726,31 @@ int main(int argc, char* argv[]) {
             tokenizer.get(), token_ids, effective_params);
 
         std::string req_id = engine->submit_request(token_ids, effective_params, model,
-            [detokenizer, callback, &done_mutex, &done_cv, &done](const std::vector<int32_t>& tokens, bool finished, vm_c::FinishReason reason) {
+            [detokenizer, callback, &effective_params, &done_mutex, &done_cv, &done](const std::vector<int32_t>& tokens, bool finished, vm_c::FinishReason reason) {
                 std::string reason_str = finish_reason_str(reason);
                 if (!tokens.empty()) {
                     bool stop_terminated = (reason == vm_c::FinishReason::STOP);
-                    auto result = detokenizer->update(tokens.back(), stop_terminated);
-                    if (result.stop_hit) {
-                        reason_str = "stop";
+                    // MTP 步长 >1 时一次返回多个 accepted tokens，必须全部处理
+                    vm_c::IncrementalDetokenizer::UpdateResult result;
+                    std::string accumulated_text;
+                    std::string accumulated_reasoning;
+                    for (size_t i = 0; i < tokens.size(); ++i) {
+                        // 如果这个 token 是 EOS/stop token，直接终止，避免 EOS 之后继续 detokenize 产生乱码
+                        bool is_stop_token = std::find(
+                            effective_params.stop_token_ids.begin(),
+                            effective_params.stop_token_ids.end(),
+                            tokens[i]) != effective_params.stop_token_ids.end();
+                        bool is_last = is_stop_token || (i + 1 == tokens.size());
+                        result = detokenizer->update(tokens[i], is_last && (stop_terminated || is_stop_token));
+                        accumulated_text += result.delta_text;
+                        accumulated_reasoning += result.delta_reasoning;
+                        if (result.stop_hit || is_stop_token) {
+                            reason_str = "stop";
+                            break;
+                        }
                     }
+                    result.delta_text = accumulated_text;
+                    result.delta_reasoning = accumulated_reasoning;
                     if (!result.delta_text.empty() || !result.delta_reasoning.empty() || finished) {
                         callback(result.delta_text, result.delta_reasoning, finished, reason_str);
                     }

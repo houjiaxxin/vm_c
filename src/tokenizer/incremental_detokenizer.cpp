@@ -183,13 +183,14 @@ IncrementalDetokenizer::UpdateResult IncrementalDetokenizer::update(
         delta = decode_next(new_token_id);
     }
 
+    size_t stop_before = 0;
     if (enable_thinking_) {
-        size_t content_before = output_text_.size();
+        stop_before = output_text_.size();
         split_reasoning_delta(delta);
-        std::string content_delta = output_text_.substr(content_before);
+        std::string content_delta = output_text_.substr(stop_before);
 
         // Trim incomplete UTF-8 from content delta
-        trim_incomplete_utf8(output_text_, content_before, content_delta);
+        trim_incomplete_utf8(output_text_, stop_before, content_delta);
 
         std::string reasoning_delta;
         int reasoning_len = static_cast<int>(reasoning_text_.size());
@@ -205,28 +206,38 @@ IncrementalDetokenizer::UpdateResult IncrementalDetokenizer::update(
         result.delta_text = content_delta;
         result.delta_reasoning = reasoning_delta;
     } else {
-        size_t prev_size = output_text_.size();
+        stop_before = output_text_.size();
         output_text_ += delta;
-        result.delta_text = output_text_.substr(prev_size);
+        result.delta_text = output_text_.substr(stop_before);
         // Trim incomplete UTF-8 from content delta
-        trim_incomplete_utf8(output_text_, prev_size, result.delta_text);
+        trim_incomplete_utf8(output_text_, stop_before, result.delta_text);
         result.delta_reasoning = "";
     }
 
-    int stop_check_offset = static_cast<int>(output_text_.size());
-
-    if (min_tokens_ > 0 && static_cast<int>(output_token_ids_.size()) <= min_tokens_) {
-        stop_check_offset = static_cast<int>(output_text_.size());
-    }
+    // 此时 stop_before 已在两条路径中正确捕获（thinking 分支在 split_reasoning_delta 之前，
+    // 非 thinking 分支在 output_text_ += delta 之前）
 
     if (!stop_strings_.empty() &&
         (min_tokens_ <= 0 || static_cast<int>(output_token_ids_.size()) > min_tokens_)) {
-        int new_chars = static_cast<int>(output_text_.size()) - stop_check_offset;
+        int new_chars = static_cast<int>(output_text_.size()) - static_cast<int>(stop_before);
         auto stop_result = check_stop_strings(output_text_, new_chars);
         if (stop_result) {
             result.stop_hit = true;
             result.stop_string = stop_result->first;
-            output_text_ = output_text_.substr(0, stop_result->second);
+            int stop_pos = stop_result->second;
+            output_text_ = output_text_.substr(0, stop_pos);
+
+            // 同步截断 delta_text：只保留 stop 位置之前的内容
+            if (stop_pos >= static_cast<int>(stop_before)) {
+                // stop 在当前 delta 内，截断
+                size_t keep = static_cast<size_t>(stop_pos) - stop_before;
+                if (keep < result.delta_text.size()) {
+                    result.delta_text = result.delta_text.substr(0, keep);
+                }
+            } else {
+                // stop 跨越旧/新内容边界（滑动窗口检出），当前 delta 全部在 stop 点之后
+                result.delta_text.clear();
+            }
         }
     }
 

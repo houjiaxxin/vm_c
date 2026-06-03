@@ -12,11 +12,11 @@
 
 namespace vm_c::official {
 
-// llama_batch_init 分配了 seq_id 指针数组，但未分配每个 token 的 seq_id 值。
-// 我们用这块 scratch 存储实际的 seq_id 值。
-// 注意：fill_batch_common 覆盖了 seq_id[i] 使其指向 g_seq_scratch，
-// 必须用 LlamaBatchBuilder::free 释放（不要直接用 llama_batch_free）。
-static thread_local std::vector<llama_seq_id> g_seq_scratch;
+// NOTE: llama_batch_init 已经为每个 seq_id[i] 分配了 malloc 数组
+// （大小为 n_seq_max * sizeof(llama_seq_id)），我们直接写入值即可，
+// 不需要额外的 scratch 缓冲区。之前的实现用 g_seq_scratch 覆盖了
+// seq_id[i] 指针，导致：(1) 原 malloc 数组泄漏；(2) free 时对 vector
+// 内部缓冲区调用 std::free → "free(): invalid pointer" 崩溃。
 
 static void fill_batch_common(
     llama_batch& batch,
@@ -26,14 +26,12 @@ static void fill_batch_common(
     const std::vector<int8_t>& logits_flags) {
     const int32_t n = static_cast<int32_t>(tokens.size());
     batch.n_tokens = n;
-    g_seq_scratch.resize(static_cast<size_t>(n));
     for (int32_t i = 0; i < n; ++i) {
-        batch.token[i]  = tokens[static_cast<size_t>(i)];
-        batch.pos[i]    = positions[static_cast<size_t>(i)];
-        g_seq_scratch[static_cast<size_t>(i)] = seq_ids[static_cast<size_t>(i)];
-        batch.n_seq_id[i] = 1;
-        batch.seq_id[i] = &g_seq_scratch[static_cast<size_t>(i)];
-        batch.logits[i] = logits_flags[static_cast<size_t>(i)] != 0;
+        batch.token[i]     = tokens[static_cast<size_t>(i)];
+        batch.pos[i]       = positions[static_cast<size_t>(i)];
+        batch.n_seq_id[i]  = 1;
+        batch.seq_id[i][0] = seq_ids[static_cast<size_t>(i)];
+        batch.logits[i]    = logits_flags[static_cast<size_t>(i)] != 0;
     }
 }
 
@@ -55,43 +53,50 @@ llama_batch LlamaBatchBuilder::build(
 llama_batch LlamaBatchBuilder::build_single(
     int32_t token, int32_t position, int32_t seq_id, bool want_logits) {
     llama_batch batch = llama_batch_init(1, 0, 1);
-    batch.n_tokens = 1;
-    batch.token[0]  = token;
-    batch.pos[0]    = position;
-    g_seq_scratch.resize(1);
-    g_seq_scratch[0] = seq_id;
+    batch.n_tokens    = 1;
+    batch.token[0]    = token;
+    batch.pos[0]      = position;
     batch.n_seq_id[0] = 1;
-    batch.seq_id[0] = &g_seq_scratch[0];
-    batch.logits[0] = want_logits ? 1 : 0;
+    batch.seq_id[0][0] = seq_id;
+    batch.logits[0]   = want_logits ? 1 : 0;
     return batch;
 }
 
 llama_batch LlamaBatchBuilder::build_mtp_draft(
     int32_t token, int32_t position,
     const float* embd_rows, int n_embd) {
-    // 构建单 token 的 MTP draft batch。
-    //   batch.embd[0] = embd_rows (host pointer to pre-norm hidden state, hidden_size × float32)
-    //   batch.token[0] = token
-    //   batch.pos[0] = position
-    //   batch.logits[0] = 1 (MTP draft 需要从 ctx_mtp 读 pre-norm + logits)
-    // llama_batch_init 的 embd 参数与 token 互斥：embd>0 时不分配 token。
-    // MTP draft 需要两者都有（token 由 graph token 路径消费，embd 由 graph embd 路径消费），
-    // 所以用 embd=0 获取 token 分配，再手动分配 embd。
+    // 关键修复：MTP draft batch 必须同时设置 token 和 embd，不可互斥。
+    //
+    // MTP 图（qwen35moe.cpp graph_mtp）有两条输入路径：
+    //   path[0]: 从 inp->tokens 通过 embedding 表查找 token embedding（正确方式）
+    //   path[1]: 直接使用 inp->embd（当 ubatch.token == nullptr 时）
+    // 路径选择由 ggml_build_forward_select 的 ubatch.token ? 0 : 1 决定。
+    //
+    // 旧实现（仅设 embd，token = nullptr）：
+    //   - ubatch.token == nullptr → path[1] 被选中
+    //   - inp->embd 被设为 ubatch->embd（隐藏状态）
+    //   - inp->h 也被设为 ubatch->embd（隐藏状态）
+    //   - BOTH 获得相同数据 → MTP 头收到 concat(hnorm(h), hnorm(h)) → 垃圾输出
+    //
+    // 新实现（同时设 token 和 embd）：
+    //   - ubatch.token != nullptr → path[0] 被选中（token embedding 从 embedding 表查找，正确）
+    //   - inp->h 从 ubatch->embd 获取隐藏状态（正确）
+    //   - ubatch->token 和 ubatch->embd 各自独立工作，互不干扰
     const int32_t n_tokens = 1;
     llama_batch batch = llama_batch_init(n_tokens, 0, 1);
+    // llama_batch_init 将 n_tokens 初始化为 0，需要显式设置为 1
+    batch.n_tokens = 1;
+    // 分配 embd 空间（llama_batch_init 在 embd=0 时不分配 embd）
     batch.embd = static_cast<float*>(std::malloc(
         static_cast<size_t>(n_tokens) * static_cast<size_t>(n_embd) * sizeof(float)));
-    if (!batch.embd) {
-        LlamaBatchBuilder::free(batch);
-        throw std::bad_alloc();
-    }
-    // fill_batch_common 需要 1-token vector
-    std::vector<int32_t> tokens_v = {token};
-    std::vector<int32_t> positions_v = {position};
-    std::vector<int32_t> seq_ids_v = {0};
-    std::vector<int8_t> logits_flags_v = {1};
-    fill_batch_common(batch, tokens_v, positions_v, seq_ids_v, logits_flags_v);
-    if (embd_rows && n_embd > 0) {
+    batch.token[0]     = token;
+    batch.pos[0]       = position;
+    batch.n_seq_id[0]  = 1;
+    batch.seq_id[0][0] = 0;
+    batch.logits[0]    = 1;
+
+    // 将 host pointer 的 embd_rows（隐藏状态）拷贝到 batch.embd
+    if (embd_rows && n_embd > 0 && batch.embd) {
         std::memcpy(batch.embd, embd_rows,
             static_cast<size_t>(n_tokens) * static_cast<size_t>(n_embd) * sizeof(float));
     }
@@ -107,11 +112,14 @@ void LlamaBatchBuilder::free(llama_batch& batch) {
     if (batch.embd)     std::free(batch.embd);
     if (batch.pos)      std::free(batch.pos);
     if (batch.n_seq_id) std::free(batch.n_seq_id);
-    // seq_id[i] 被 fill_batch_common 覆盖为 &g_seq_scratch[i]，不是 malloc 出来的，
-    // 所以只释放外层的指针数组 batch.seq_id 本身，不释放每个元素。
-    if (batch.seq_id)   std::free(batch.seq_id);
+    if (batch.seq_id) {
+        // 释放 llama_batch_init 分配的每个 seq_id[i] 数组
+        for (int32_t i = 0; batch.seq_id[i] != nullptr; ++i) {
+            std::free(batch.seq_id[i]);
+        }
+        std::free(batch.seq_id);
+    }
     if (batch.logits)   std::free(batch.logits);
-    // 避免误用
     batch.token    = nullptr;
     batch.embd     = nullptr;
     batch.pos      = nullptr;

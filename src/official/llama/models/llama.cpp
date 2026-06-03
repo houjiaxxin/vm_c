@@ -242,8 +242,8 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
     if constexpr (!embed) {
         // lm_head
         cur = build_lora_mm(model.output, cur, model.output_s);
-        // [TP] lm_head 是 ROW 切分，输出需要 allreduce
-        add_reduce(cur);
+        // [TP] lm_head 在 GGUF 路径中未做 TP 分片，不需要 allreduce
+        // add_reduce(cur);
 
         cb(cur, "result_output", -1);
         res->t_logits = cur;

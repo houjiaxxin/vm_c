@@ -257,8 +257,10 @@ llama_model_qwen35moe::graph::graph(const llama_model & model, const llm_graph_p
 
     // LM head
     cur = build_lora_mm(model.output, cur, model.output_s);
-    // [TP] lm_head 是 column-TP 切分，输出需要 allreduce
-    add_reduce(cur);
+    // [TP] lm_head 在 GGUF 路径中未做 TP 分片（每 rank 持有完整权重），
+    // 因此不需要 allreduce；如做 allreduce（求和）会导致 logits 值翻倍。
+    // 若需 TP 分片，需改为 ColSplit0（沿 vocab 维度分片）+ allgather 通信。
+    // add_reduce(cur);
 
     cb(cur, "result_output", -1);
     res->t_logits = cur;
@@ -805,8 +807,8 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
     ggml_tensor * head_s = layer.nextn.shared_head_head ? layer.nextn.shared_head_head_s : model.output_s;
     GGML_ASSERT(head_w && "QWEN35MOE MTP: missing LM head (nextn.shared_head_head or model.output)");
     cur = build_lora_mm(head_w, cur, head_s);
-    // [TP] MTP lm_head 是 column-TP 切分，输出需要 allreduce
-    add_reduce(cur);
+    // [TP] lm_head 在 GGUF 路径中未做 TP 分片，不需要 allreduce
+    // add_reduce(cur);
     cb(cur, "result_output", -1);
     vm_c::hidden_log_register("mtp.logits_post_allreduce", cur);
 

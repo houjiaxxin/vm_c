@@ -1126,6 +1126,17 @@ void load_gguf_weights(const std::string& gguf_path, ModelWeights& weights,
         CUDA_CHECK(cudaFree(p));
     }
 
+    // 打印 lm_head.weight 形状（诊断 TP 分片状态）
+    for (const auto& [name, tensor] : weights.gpu_weights) {
+        if (name == "lm_head.weight" || name == "model.lm_head.weight") {
+            auto sh = tensor.shape();
+            spdlog::info("[GGUF-DIAG] {}: shape=[{}x{}] dtype={} tp_rank={} tp_size={}",
+                         name, sh[0], sh[1], static_cast<int>(tensor.dtype()),
+                         tp_rank, tp_size);
+            break;
+        }
+    }
+
     spdlog::info(
         "GGUF: loaded {} tensors ({} native-dense + {} ggml-quant [iq4={} other={}] + {} converted)",
         weights.gpu_weights.size(), n_direct, n_iq4 + n_ggml_quant, n_iq4, n_ggml_quant, n_converted);
