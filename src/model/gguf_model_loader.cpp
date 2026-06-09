@@ -634,6 +634,13 @@ void load_gguf_weights(const std::string& gguf_path, ModelWeights& weights,
         const auto& tinfo = tensors[ti];
         std::string vmc_name = gguf_tensor_name_to_vmc(tinfo.name, num_layers);
 
+        // DEBUG: 打印前几个 tensor 确认加载路径
+        if (ti < 5 || tinfo.name.find("embed") != std::string::npos || vmc_name.find("token_embd") != std::string::npos) {
+            spdlog::error("[GGUF-LOOP] ti={} GGUF='{}' vmc='{}' type={} ne=[{},{},{},{}]",
+                ti, tinfo.name, vmc_name, (int)tinfo.type,
+                tinfo.ne[0], tinfo.ne[1], tinfo.ne[2], tinfo.ne[3]);
+        }
+
         // ── TensorSchema 统一决策：分片模式 + MTP 跳过 ──
         const ArchSchema* arch_schema = get_arch_schema(config.arch);
         const TensorSchemaEntry* schema_entry = nullptr;
@@ -671,6 +678,14 @@ void load_gguf_weights(const std::string& gguf_path, ModelWeights& weights,
                 ctx.full_ne[i] = tinfo.ne[i];
                 ctx.sharded_ne[i] = tinfo.ne[i];
             }
+        }
+
+        // DEBUG: 打印 token_embd 相关张量的真实名称和维度
+        if (tinfo.name.find("embed") != std::string::npos || vmc_name.find("token_embd") != std::string::npos || vmc_name.find("output") != std::string::npos) {
+            spdlog::error("[GGUF-DEBUG] GGUF name='{}' vmc_name='{}' type={} ne=[{},{},{},{}] shard_mode={} tp_size={} schema_entry={}",
+                tinfo.name, vmc_name, (int)tinfo.type,
+                tinfo.ne[0], tinfo.ne[1], tinfo.ne[2], tinfo.ne[3],
+                (int)ctx.shard_mode, tp_size, schema_entry ? "YES" : "NO");
         }
 
         // GDN 已知张量保留一下日志便于调试
