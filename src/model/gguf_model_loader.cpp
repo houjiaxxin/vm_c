@@ -752,8 +752,8 @@ void load_gguf_weights(const std::string& gguf_path, ModelWeights& weights,
                             ctx.blk_elems, ctx.blk_bytes, true);
                         ggml_ne0 = n_embd;
                         ggml_ne1 = n_vocab_full;
-                        spdlog::debug("IQ4: Replicate token_embd to full vocab: shard={} -> full={} (tp_rank={}/{})",
-                                      n_vocab_shard, n_vocab_full, tp_rank, tp_size);
+                        spdlog::info("IQ4 REPLICATE token_embd: ggml_ne=[{},{}] block_count={} alloc_bytes={} (tp_rank={})",
+                                      ggml_ne0, ggml_ne1, ctx.block_count, ctx.alloc_bytes, tp_rank);
                     } else if (tinfo.n_dims >= 2) {
                         shard_gdn_iq4_head_split0(stage_buf, raw_data, tp_rank, tp_size,
                                                   ctx.full_ne[0], ctx.full_ne[1]);
@@ -831,6 +831,12 @@ void load_gguf_weights(const std::string& gguf_path, ModelWeights& weights,
         // ── 其他量化类型：ggml 原生 buffer（使用 ShardContext 维度）──
 #if defined(VM_C_USE_OFFICIAL_GGML_MOE) && VM_C_USE_OFFICIAL_GGML_MOE
         if (ggml_type_is_quantized(tinfo.type)) {
+            if (vmc_name.find("token_embd") != std::string::npos && tinfo.ne[0] == 2048) {
+                spdlog::info("[GGUF-LOAD] token_embd: type={} shard_mode={} tp_size={} full_ne=[{},{}] blk_elems={} blk_bytes={} sharded_ne=[{},{}]",
+                    (int)tinfo.type, (int)ctx.shard_mode, tp_size,
+                    ctx.full_ne[0], ctx.full_ne[1], ctx.blk_elems, ctx.blk_bytes,
+                    ctx.sharded_ne[0], ctx.sharded_ne[1]);
+            }
             const void* raw_data = reader.tensor_data(ti);
             if (!raw_data) { spdlog::warn("Null data for {}", vmc_name); continue; }
 
@@ -883,8 +889,8 @@ void load_gguf_weights(const std::string& gguf_path, ModelWeights& weights,
                             ctx.blk_elems, ctx.blk_bytes, true);
                         ggml_ne0 = n_embd;
                         ggml_ne1 = n_vocab_full;
-                        spdlog::debug("Replicate token_embd to full vocab: shard={} -> full={} (tp_rank={}/{})",
-                                      n_vocab_shard, n_vocab_full, tp_rank, tp_size);
+                        spdlog::info("REPLICATE token_embd: ggml_ne=[{},{}] block_count={} alloc_bytes={} (tp_rank={})",
+                                      ggml_ne0, ggml_ne1, ctx.block_count, ctx.alloc_bytes, tp_rank);
                     } else {
                         shard_ggml_quant_col_split0(
                             stage_buf, raw_data, ctx.blk_bytes, tp_rank, tp_size,
