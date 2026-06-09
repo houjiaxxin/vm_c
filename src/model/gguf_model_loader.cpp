@@ -737,8 +737,8 @@ void load_gguf_weights(const std::string& gguf_path, ModelWeights& weights,
                     // TP 模式下 token_embd / output 复制：加载完整 vocab embedding
                     if ((ctx.vmc_name.find("token_embd") != std::string::npos ||
                          ctx.vmc_name.find("output.weight") != std::string::npos) && tinfo.n_dims >= 2) {
-                        const int64_t n_embd = ctx.full_ne[1];
-                        const int64_t n_vocab_shard = ctx.full_ne[0];
+                        const int64_t n_embd = ctx.full_ne[0];
+                        const int64_t n_vocab_shard = ctx.full_ne[1];
                         const int64_t n_vocab_full = n_vocab_shard * tp_size;
                         const int64_t total_blks = (n_vocab_full * n_embd + ctx.blk_elems - 1) / ctx.blk_elems;
                         host_bytes = static_cast<size_t>(total_blks) * ctx.blk_bytes;
@@ -863,8 +863,8 @@ void load_gguf_weights(const std::string& gguf_path, ModelWeights& weights,
                     // GGUF 是 pre-sharded，需要复制成全尺寸供所有 rank 使用
                     if (ctx.vmc_name.find("token_embd") != std::string::npos ||
                         ctx.vmc_name.find("output.weight") != std::string::npos) {
-                        const int64_t n_embd = ctx.full_ne[1];
-                        const int64_t n_vocab_shard = ctx.full_ne[0];
+                        const int64_t n_embd = ctx.full_ne[0];
+                        const int64_t n_vocab_shard = ctx.full_ne[1];
                         // 计算全 vocab 尺寸
                         const int64_t n_vocab_full = n_vocab_shard * tp_size;
                         const int64_t total_blks = (n_vocab_full * n_embd + ctx.blk_elems - 1) / ctx.blk_elems;
@@ -929,8 +929,8 @@ void load_gguf_weights(const std::string& gguf_path, ModelWeights& weights,
                 (ctx.vmc_name.find("token_embd") != std::string::npos ||
                  ctx.vmc_name.find("output.weight") != std::string::npos)) {
                 is_embd_replicate = true;
-                rep_n_embd = ctx.full_ne[1];
-                rep_n_vocab_full = ctx.full_ne[0] * tp_size;
+                rep_n_embd = ctx.full_ne[0];
+                rep_n_vocab_full = ctx.full_ne[1] * tp_size;
             }
 
             const Shape& alloc_shape = is_embd_replicate ? Shape({rep_n_embd, rep_n_vocab_full}) : ctx.target_shape;
