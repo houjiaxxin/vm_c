@@ -771,9 +771,13 @@ void load_gguf_weights(const std::string& gguf_path, ModelWeights& weights,
                                          ctx.full_ne[0], ctx.full_ne[1], ctx.full_ne[2]);
                 }
                 host_ptr = stage_buf;
-                ggml_ne0 = ctx.sharded_ne[0];
-                ggml_ne1 = ctx.sharded_ne[1];
-                ggml_ne2 = ctx.sharded_ne[2];
+                // 仅当未触发 embedding 复制时才使用 sharded 维度
+                if (ctx.vmc_name.find("token_embd") == std::string::npos &&
+                    ctx.vmc_name.find("output.weight") == std::string::npos) {
+                    ggml_ne0 = ctx.sharded_ne[0];
+                    ggml_ne1 = ctx.sharded_ne[1];
+                    ggml_ne2 = ctx.sharded_ne[2];
+                }
             }
 
             GpuTensor gpu_iq4 = make_ggml_quant_from_host(
